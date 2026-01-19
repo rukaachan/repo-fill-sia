@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "EPrints — Autofill Only (Mercubuana)",
-  "version": "3.0.0",
-  "description": "Auto-fills Description, Visible to, and Language on the EPrints Edit→Upload page. No DOM reordering.",
+  "name": "EPrints — Autofill (v11.1)",
+  "version": "11.1.0",
+  "description": "Auto-fills Description/Language and suggests Subjects.",
   "host_permissions": ["https://repository.mercubuana.ac.id/*"],
   "content_scripts": [
     {
