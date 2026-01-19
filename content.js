@@ -1,10 +1,12 @@
-/* EPrints Autofill — v6.0 (Strict Signal Matching)
+/* EPrints Autofill — v12.1 (Updated Logic)
    - [stage=files]   Autofills Description/Visible/Language.
-   - [stage=subjects] Implements "Strict Signal Matching":
-     1. Uses a STOP_WORDS list to filter language "noise".
-     2. Uses an ACRONYM_LIST to find "signal" in combined words.
-     3. Scans subject tree for high-quality signal keywords.
-     4. Injects a UI box on the RIGHT side with relevant matches.
+   - [stage=subjects] Implements "Strict Signal Matching".
+   
+   Updates v12.1:
+   1. Fix: "XXXX_ABSTRAK" or "ABSTRACT" -> becomes strictly "ABSTRAK".
+   2. Fix: Prioritized "DAFTAR PUSTAKA & LAMPIRAN" detection over plain "DAFTAR PUSTAKA".
+   3. Update: "ABSTRAK" visibility set to "Anyone".
+   4. Update: "JUDUL HALAMAN" / "HALAMAN JUDUL" -> becomes "COVER" (Visible: Anyone).
 */
 
 (() => {
@@ -24,10 +26,7 @@
   // ===================================================================
   // SECTION A: [stage=files] AUTOMATION (File Upload Page)
   // ===================================================================
-  
-  // [Functions: romanToInt, parseFileName, detectBabNumber, toCanonicalDescription,
-  // autofillFileBlock, processAllFiles, attachFileObserver remain identical to v5.0]
-  
+
   function romanToInt(roman) {
     if (!roman) return null;
     const s = roman.toUpperCase();
@@ -72,15 +71,31 @@
 
   function toCanonicalDescription(descRaw) {
     const l = (descRaw || "").toLowerCase();
-    if (l.includes("cover") || l.includes("halaman judul")) return "COVER";
-    if (l.includes("02 abstract") || l.includes("abstract")) return "ABSTRAK";
+
+    // 4. Update: Handle "JUDUL HALAMAN" or "HALAMAN JUDUL" -> COVER
+    if (l.includes("cover") || l.includes("halaman judul") || l.includes("judul halaman")) {
+      return "COVER";
+    }
+
+    // 1. Update: Aggressive ABSTRAK handling.
+    // Removes prefixes like "XXXX_" and handles "ABSTRACT" -> "ABSTRAK"
+    if (l.includes("abstrak") || l.includes("abstract")) {
+      return "ABSTRAK";
+    }
+
+    // 2. Update: Prioritize long "DAFTAR PUSTAKA & LAMPIRAN" before short "DAFTAR PUSTAKA"
+    // Checks for "dan" OR "&"
+    if (l.includes("daftar pustaka dan lampiran") || l.includes("daftar pustaka & lampiran")) {
+      return "DAFTAR PUSTAKA DAN LAMPIRAN";
+    }
+    
     if (l.includes("daftar pustaka")) return "DAFTAR PUSTAKA";
-    if (l.includes("daftar pustaka dan lampiran")) return "DAFTAR PUSTAKA DAN LAMPIRAN";
     if (l.includes("lampiran")) return "LAMPIRAN";
 
     const babNum = detectBabNumber(descRaw);
     if (babNum != null) return `BAB ${babNum}`;
     if (/\bbab\b/i.test(descRaw)) return "BAB XXX";
+    
     return (descRaw || "").toUpperCase();
   }
 
@@ -93,8 +108,7 @@
     const info = parseFileName(raw);
     const writeDesc = toCanonicalDescription(info.desc);
 
-    log("autofillFileBlock →", { raw, parsedDesc: info.desc, writeDesc });
-
+    // Fill Description
     const descInput =
       block.querySelector('input[id$="_formatdesc"]') ||
       block.querySelector('input.ep_document_formatdesc');
@@ -103,9 +117,14 @@
       descInput.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
+    // Fill Visibility
+    // 3. Update: If COVER or ABSTRAK -> Anyone
     const visSelect = block.querySelector('select[id*="_security"]');
     if (visSelect) {
-      const wantLabel = (writeDesc === "COVER") ? "Anyone" : "Registered users only";
+      const wantLabel = (writeDesc === "COVER" || writeDesc === "ABSTRAK") 
+        ? "Anyone" 
+        : "Registered users only";
+
       for (const opt of visSelect.options) {
         if (opt.text.trim().toLowerCase() === wantLabel.toLowerCase()) {
           visSelect.value = opt.value;
@@ -115,6 +134,7 @@
       }
     }
 
+    // Fill Language (Indonesian)
     const langSelect = block.querySelector('select[id*="_language"]');
     if (langSelect) {
       for (const opt of langSelect.options) {
@@ -147,94 +167,143 @@
 
 
   // ===================================================================
-  // SECTION B: [stage=subjects] AUTOMATION (Strict Suggester UI)
+  // SECTION B: [stage=subjects] AUTOMATION (v12.0 - Scored Suggester UI)
+  // [No Logic Changes Requested Here - Code Preserved]
   // ===================================================================
-   
+
   const STOP_WORDS = new Set([
-    'ANALISIS', 'PENGARUH', 'PERUBAHAN', 'DAN', 'TERHADAP', 'PADA',
-    'PERIODE', 'TAHUN', 'STUDI', 'KASUS', 'METODE', 'SEBUAH', 'TINJAUAN',
-    'GAMBARAN', 'HUBUNGAN', 'DENGAN', 'UNTUK', 'DI', 'DALAM', 'SERTA',
-    'SECARA', 'UPAYA', 'PENERAPAN', 'EVALUASI', 'FAKTOR', 'SEBAGAI',
-    'DITINJAU', 'PENGGUNAAN', 'DARI', 'YANG',
-    'RAKYAT'
+    'ADA', 'ADALAH', 'ADANYA', 'ADAPUN', 'AGAR', 'AKAN', 'AKHIR', 'AKHIRNYA',
+    'AKU', 'AKULAH', 'AKAN', 'ALAH', 'ANTARA', 'APA', 'APABILA', 'APAKAH',
+    'APALAGI', 'ATAS', 'ATAU', 'AWAL', 'BAHWA', 'BAIK', 'BAGAI', 'BAGAIKAN',
+    'BAGAIMANA', 'BAGI', 'BAHKAN', 'BAKAL', 'BANYAK', 'BARU', 'BEBERAPA',
+    'BEGINI', 'BEGINILAH', 'BEGINIAN', 'BEGITU', 'BEGITULAH', 'BEGITUPUN',
+    'BELUM', 'BENAR', 'BERAPA', 'BERBAGAI', 'BERKATA', 'BERMACAM', 'BERNIAT',
+    'BERSAMA', 'BERDASARKAN', 'BISA', 'BOLEH', 'BUAT', 'BUKAN', 'CARA',
+    'CUMA', 'DALAM', 'DAN', 'DAPAT', 'DARI', 'DARIPADA', 'DEMI', 'DEMIKIAN',
+    'DENGAN', 'DENGANNYA', 'DEPAN', 'DI', 'DIA', 'DIALAH', 'DIRI', 'DIRINYA',
+    'DOELOE', 'DULU', 'ENGGAK', 'ENTAH', 'EVALUASI', 'FAKTOR', 'GAMBARAN',
+    'GUNA', 'HAL', 'HAMPIR', 'HANYA', 'HARUS', 'HENDAK', 'HINGGA', 'HUBUNGAN',
+    'IA', 'IALAH', 'IBARAT', 'INI', 'INILAH', 'INTERVENING', 'ITU', 'ITULAH',
+    'JADI', 'JANGAN', 'JAUH', 'JUGA', 'JUMLAH', 'KADANG', 'KALI', 'KAMI',
+    'KAMU', 'KAN', 'KANTOR', 'KARENA', 'KATA', 'KE', 'KECIL', 'KEMUDIAN',
+    'KENAPA', 'KEPADA', 'KEPATUHAN', 'KEPUASAN', 'KESELURUHAN', 'KETIKA',
+    'KHUSUSNYA', 'KINI', 'KITA', 'KUALITAS', 'KURANG', 'LAGI', 'LAIN', 'LALU',
+    'LAMA', 'LANGSUNG', 'LANJUT', 'LEBIH', 'MAKA', 'MAKSUD', 'MALAH', 'MANA',
+    'MAMPU', 'MASIH', 'MAU', 'MELALUI', 'MELAKUKAN', 'MELIHAT', 'MEMANG',
+    'MEMBUAT', 'MEMILIKI', 'MEMPERLIHATKAN', 'MEMPUNYAI', 'MENGENAI',
+    'MENGGUNAKAN', 'MENGINGAT', 'MENJADI', 'MENTERI', 'MENUJU', 'MENURUT',
+    'MERASA', 'MEREKA', 'MERUPAKAN', 'MESKI', 'METODE', 'MISALNYA', 'MASALAH',
+    'MULAI', 'MUNGKIN', 'NAH', 'NAMUN', 'NANTI', 'NYA', 'OLEH', 'ORANG',
+    'PADA', 'PADAHAL', 'PALING', 'PANJANG', 'PARA', 'PASTI', 'PELAKSANAAN',
+    'PELAYANAN', 'PENGARUH', 'PENELITIAN', 'PENERAPAN', 'PER', 'PERAN',
+    'PERBEDAAN', 'PERIODE', 'PERLU', 'PERNAH', 'PERTAMA', 'PERUBAHAN',
+    'PIHAK', 'PRIBADI', 'PROSES', 'PULA', 'PUN', 'RAKYAT', 'RATA', 'RUMAH',
+    'SAAT', 'SAYA', 'SAMA', 'SAMPAI', 'SAMPING', 'SANGAT', 'SATU', 'SAJA',
+    'SEBAGAI', 'SEBAGAIMANA', 'SEBAB', 'SEBAGIAN', 'SEBELUM', 'SEBENARNYA',
+    'SEBUAH', 'SECARA', 'SEPERTI', 'SERING', 'SERTA', 'SESUATU', 'SESUDAH',
+    'SETELAH', 'SETIAP', 'SEJAK', 'SEHINGGA', 'SEKARANG', 'SEKITAR', 'SEMUA',
+    'SEMENTARA', 'SEMAKIN', 'SIAPA', 'SINI', 'SITU', 'STASIUN', 'STUDI',
+    'SUDAH', 'SUPAYA', 'TAHUN', 'TAPI', 'TANPA', 'TENTANG', 'TENTU', 'TERHADAP',
+    'TERJADI', 'TERMASUK', 'TERNYATA', 'TERSEBUT', 'TETAPI', 'TIAP', 'TIDAK',
+    'TIGA', 'TINJAUAN', 'TINGGI', 'TOTAL', 'TUNGGAL', 'UNTUK', 'UPAYA',
+    'VARIABEL', 'WAJIB', 'WAKTU', 'WALAUPUN', 'YA', 'YAITU', 'YAKNI', 'YANG',
+    'KHUSUS'
   ]);
   
-  /**
-   * This is the new "signal" list.
-   * It helps find keywords *inside* combined words (like CAR in "PERUBAHANCAR").
-   */
   const ACRONYM_LIST = [
-      'CAR', 'LDR', 'NPL', 'BOPO', 'ROE'
+      'CAR', 'LDR', 'NPL', 'BOPO', 'ROE', 'UKM', 'UMKM'
   ];
 
-  /**
-   * Extracts the important "signal" keywords from the title.
-   */
-  function getSignalKeywords(titleText) {
+  function getSignalKeywords(titleText, stopWordsSet) {
     const upperTitle = titleText.toUpperCase();
     const signalWords = new Set();
 
-    // 1. Add known acronyms that are found
     ACRONYM_LIST.forEach(acronym => {
-        // This regex finds the acronym even if it's inside another word
-        // e.g., finds "CAR" in "PERUBAHANCAR"
-        const regex = new RegExp(`\\b(${acronym})\\b|([A-Z]${acronym})\\b`, 'i');
-        if (regex.test(upperTitle)) {
-            signalWords.add(acronym);
-        }
+      const regex = new RegExp(`\\b(${acronym})\\b|([A-Z]${acronym})\\b`, 'i');
+      if (regex.test(upperTitle)) {
+        signalWords.add(acronym);
+      }
     });
 
-    // 2. Add regular words from the title, after filtering
     const titleWords = upperTitle
-      .replace(/[^\w\s]/g, " ")  // Replace punctuation with space
-      .replace(/\s+/g, " ")      // Normalize multiple spaces
+      .replace(/[^\w\s]/g, " ")
+      .replace(/\s+/g, " ")
       .split(' ');
       
     titleWords.forEach(word => {
-        if (word.length > 3 && !/^[0-9]+$/.test(word) && !STOP_WORDS.has(word)) {
-            signalWords.add(word);
-        }
+      if (
+        word.length > 2 &&
+        !/^[0-9]+$/.test(word) &&
+        !stopWordsSet.has(word)
+      ) {
+        signalWords.add(word);
+      }
     });
     
     return signalWords;
   }
   
-  /**
-   * Injects the pop-up UI on the RIGHT side of the page.
-   */
-  function injectUI(matchedLabels) {
+  function tokenizeSubject(subjectText) {
+      return new Set(
+        subjectText.toUpperCase()
+          .replace(/[\d.,\/]/g, " ")
+          .replace(/[^\w\s]/g, "")
+          .split(/\s+/)
+          .filter(t => t.length > 2 && !STOP_WORDS.has(t))
+      );
+  }
+
+  function injectUI(scoredMatches) {
     document.getElementById("epx-suggester")?.remove();
 
     const ui = document.createElement("div");
     ui.id = "epx-suggester";
     
-    let listHtml = "";
-    if (matchedLabels.size > 0) {
-      const sortedLabels = [...matchedLabels].sort();
-      sortedLabels.forEach(label => {
-        const safeLabel = label.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        listHtml += `<li style="margin-bottom: 5px;">${safeLabel}</li>`;
+    const topMatches = scoredMatches.slice(0, 5);
+    const otherMatches = scoredMatches.slice(5, 15); 
+
+    let topMatchesHtml = '';
+    if (topMatches.length > 0) {
+      topMatches.forEach(match => {
+        const safeLabel = match.label.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        topMatchesHtml += `<li style="margin-bottom: 5px;">(Score: ${match.score}) ${safeLabel}</li>`;
       });
     } else {
-      listHtml = "<li>No specific keywords from the title matched any subjects.</li>";
+      topMatchesHtml = "<li>No relevant subjects found.</li>";
     }
     
+    let otherMatchesHtml = '';
+    if (otherMatches.length > 0) {
+      otherMatches.forEach(match => {
+        const safeLabel = match.label.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        otherMatchesHtml += `<li style="margin-bottom: 5px; opacity: 0.8;">(Score: ${match.score}) ${safeLabel}</li>`;
+      });
+    }
+
     ui.innerHTML = `
       <h3 style="margin: 0 0 10px 0; padding-bottom: 5px; border-bottom: 1px solid #ccc; font-size: 16px; color: #333;">
         💡 Subject Suggestions
       </h3>
-      <ul style="margin: 0; padding: 0 0 0 20px; max-height: 300px; overflow-y: auto; list-style-type: disc;">
-        ${listHtml}
+      
+      <strong style="display: block; margin-top: 10px; margin-bottom: 5px; color: #111;">MATCH (Top 5)</strong>
+      <ul style="margin: 0; padding: 0 0 0 20px; list-style-type: disc;">
+        ${topMatchesHtml}
       </ul>
+      
+      ${otherMatches.length > 0 ? `
+        <strong style="display: block; margin-top: 15px; margin-bottom: 5px; color: #111;">COULD BE MATCHED (Top 10)</strong>
+        <ul style="margin: 0; padding: 0 0 0 20px; max-height: 250px; overflow-y: auto; list-style-type: circle;">
+          ${otherMatchesHtml}
+        </ul>` 
+      : ''}
     `;
 
-    // --- UI ---
     Object.assign(ui.style, {
       position: 'fixed',
       right: '20px', 
       top: '120px', 
       width: '320px',
-      backgroundColor: '#ffffff',
+      backgroundColor: '#f9f9f9',
       border: '1px solid #ccc',
       borderRadius: '8px',
       boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
@@ -247,83 +316,63 @@
     });
 
     document.body.appendChild(ui);
-    log(`UI injected with ${matchedLabels.size} suggestions.`);
+    log(`UI injected with ${scoredMatches.length} total suggestions.`);
   }
 
-  /**
-   * Main function for the Subject page.
-   * Reads title, filters for signal, matches, and shows UI.
-   */
   function suggestSubjects() {
-    log("Running Strict Subject Suggester (v6.0)...");
+    log("Running Strict Subject Suggester (v12.0)...");
     
-    // 1. Get Title
+    const stopWordsSet = STOP_WORDS;
+    
     const titleEl = document.querySelector("h1.ep_tm_pagetitle"); 
     if (!titleEl) { warn("Could not find title: h1.ep_tm_pagetitle"); return; }
     
     const titleText = (titleEl.innerText || "").replace(/Edit item:/i, "");
     
-    // 2. Extract *Signal* Keywords
-    const signalKeywords = getSignalKeywords(titleText);
+    const signalKeywords = getSignalKeywords(titleText, stopWordsSet);
     
     if (signalKeywords.size === 0) {
       warn("No useful keywords found in title after filtering.");
-      injectUI(new Set());
+      injectUI([]);
       return;
     }
     log("Strict Keywords Found:", signalKeywords);
 
-    // 3. Scan Subject Tree
     const subjectTree = document.getElementById("c38_tree");
     if (!subjectTree) { warn("Could not find subject tree (#c38_tree)."); return; }
 
-    // We select ALL <dt> elements, not just <a> tags.
-    const subjectNodes = subjectTree.querySelectorAll("dt");
-    const matchedLabels = new Set();
+    const subjectLinks = subjectTree.querySelectorAll("a"); 
+    const scoredMatches = [];
     
-    log(`Scanning ${subjectNodes.length} subject nodes for matches...`);
+    log(`Scanning ${subjectLinks.length} subject labels for matches...`);
 
-    // 4. Match
-    subjectNodes.forEach(node => {
-      const fullLabel = (node.textContent || "").trim();
+    subjectLinks.forEach(labelEl => {
+      const fullLabel = (labelEl.textContent || "").trim();
       if (!fullLabel) return;
       
-      const subjectTextUpper = fullLabel.toUpperCase();
+      const subjectTokens = tokenizeSubject(fullLabel);
+      let matchScore = 0;
       
       for (const keyword of signalKeywords) {
-        // Use a RegExp to find the keyword as a whole word
-        try {
-          const regex = new RegExp(`\\b${keyword}\\b`, 'i');
-          if (regex.test(subjectTextUpper)) {
-            // We found a match. Get the *clean* text (without the "Add" button text)
-            const labelEl = node.querySelector("a") || node;
-            const cleanLabel = labelEl.textContent.trim();
-            
-            matchedLabels.add(cleanLabel);
-            log(`  MATCH: Keyword '${keyword}' matched subject "${cleanLabel}"`);
-            break; 
-          }
-        } catch (e) {
-          warn(`Regex error for keyword '${keyword}', using simple match.`, e);
-          if (subjectTextUpper.includes(keyword)) {
-            const labelEl = node.querySelector("a") || node;
-            const cleanLabel = labelEl.textContent.trim();
-            matchedLabels.add(cleanLabel);
-            break;
-          }
+        if (subjectTokens.has(keyword)) {
+            matchScore++;
         }
+      }
+      
+      if (matchScore > 0) {
+        scoredMatches.push({ label: fullLabel, score: matchScore });
       }
     });
 
-    // 5. Display UI (on the right)
-    injectUI(matchedLabels);
+    scoredMatches.sort((a, b) => b.score - a.score);
+
+    injectUI(scoredMatches);
   }
 
   // ===================================================================
   // MAIN ROUTER
   // ===================================================================
 
-  // Manual trigger: EPFill.now() in DevTools
   window.EPFill = {
     nowFiles: processAllFiles,
     nowSubjects: suggestSubjects,
